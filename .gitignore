@@ -1,0 +1,6 @@
+*.png
+*.xdmf
+*.h5
+*.vtk
+__pycache__/
+.DS_Store
