@@ -13,7 +13,7 @@ W=0.02
 domain = mesh.create_rectangle(
     comm=MPI.COMM_WORLD, 
     points=((0.0, 0.0), (L, W)), 
-    n=[2, 2], 
+    n=[50, 25], 
     cell_type=mesh.CellType.quadrilateral
 )
 
@@ -118,7 +118,9 @@ warped = function_grid.warp_by_vector("u", factor=1)
 warped.set_active_vectors("u")
 
 # Add mesh to plotter and visualize
-actor = plotter.add_mesh(warped, show_edges=True, lighting=False, clim=[0, 10])
+actor = plotter.add_mesh(warped, show_edges=True, lighting=False, clim=[0, 0.5])
+plotter.view_xy()
+plotter.render()
 
 # Compute magnitude of displacement to visualize in GIF
 Vs = fem.functionspace(domain, ("Lagrange", 1))
@@ -144,7 +146,12 @@ for n in range(1, 10):
     warped.set_active_scalars("mag")
     warped_n = function_grid.warp_by_vector(factor=1)
     warped.points[:, :] = warped_n.points
+    current_mag = magnitude.x.array
     warped.point_data["mag"][:] = magnitude.x.array
-    plotter.update_scalar_bar_range([0, 10])
+
+    max_disp = np.max(current_mag)
+    if max_disp > 0:
+        plotter.update_scalar_bar_range([0, max_disp])
     plotter.write_frame()
+
 plotter.close()
