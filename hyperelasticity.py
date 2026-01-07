@@ -17,8 +17,12 @@ domain = mesh.create_rectangle(
     cell_type=mesh.CellType.quadrilateral
 )
 
+d = domain.geometry.dim
+
 # Assigning the shape function
 V = fem.functionspace(domain, ("Lagrange", 1 ,(domain.geometry.dim,)))
+W_stress = fem.functionspace(domain, ("Discontinuous Lagrange", 0, (d, d)))
+P_func = fem.Function(W_stress, name="Piola_Stress")
 
 def left(x):
     return np.isclose(x[0], 0)
@@ -74,6 +78,7 @@ lmbda = fem.Constant(domain, E * nu / ((1 + nu) * (1 - 2 * nu)))
 psi = (mu / 2) * (Ic - 3) - mu * ufl.ln(J) + (lmbda / 2) * (ufl.ln(J)) ** 2
 
 P = ufl.diff(psi, F)
+P_magnitude_expr = ufl.sqrt(ufl.inner(P, P))
 
 metadata = {"quadrature_degree": 4}
 ds = ufl.Measure("ds", domain=domain, subdomain_data=facet_tag, metadata=metadata)
@@ -102,8 +107,8 @@ problem = NonlinearProblem(
     petsc_options_prefix="hyperelasticity",
 )
 
-plotter = pyvista.Plotter()
-plotter.open_gif("deformation.gif", fps=3)
+plotter = pyvista.Plotter(shape=(1, 2))
+plotter.open_gif("deformation_and_stress.gif", fps=3)
 
 topology, cells, geometry = plot.vtk_mesh(u.function_space)
 function_grid = pyvista.UnstructuredGrid(topology, cells, geometry)
@@ -118,9 +123,20 @@ warped = function_grid.warp_by_vector("u", factor=1)
 warped.set_active_vectors("u")
 
 # Add mesh to plotter and visualize
-actor = plotter.add_mesh(warped, show_edges=True, lighting=False, clim=[0, 0.5])
+plotter.subplot(0, 0)
+plotter.add_text("Displacement Magnitude", font_size=10)
+
+
+warped["mag"] = np.zeros(geometry.shape[0])
+actor = plotter.add_mesh(warped, scalars="mag", show_edges=True, lighting=False, clim=[0, 0.01])
 plotter.view_xy()
-plotter.render()
+
+plotter.subplot(0, 1)
+plotter.add_text("Stress Magnitude (P)", font_size=10)
+warped_stress = warped.copy()
+warped_stress.cell_data["P_mag"] = np.zeros(function_grid.n_cells)
+actor_p = plotter.add_mesh(warped_stress, scalars="P_mag", show_edges=True, lighting=False, clim=[0, 5000])
+plotter.view_xy()
 
 # Compute magnitude of displacement to visualize in GIF
 Vs = fem.functionspace(domain, ("Lagrange", 1))
@@ -130,9 +146,13 @@ us = fem.Expression(
 )
 magnitude.interpolate(us)
 warped["mag"] = magnitude.x.array
+V_mag_stress = fem.functionspace(domain, ("Discontinuous Lagrange", 0))
+P_mag_func = fem.Function(V_mag_stress)
+stress_expr = fem.Expression(P_magnitude_expr, V_mag_stress.element.interpolation_points)
+
 
 log.set_log_level(log.LogLevel.INFO)
-tval0 = -1.5
+tval0 = -2
 for n in range(1, 10):
     T.value[1] = n * tval0
     problem.solve()
@@ -145,13 +165,39 @@ for n in range(1, 10):
     magnitude.interpolate(us)
     warped.set_active_scalars("mag")
     warped_n = function_grid.warp_by_vector(factor=1)
+    
+    # Update Displacement points and data
     warped.points[:, :] = warped_n.points
     current_mag = magnitude.x.array
-    warped.point_data["mag"][:] = magnitude.x.array
+    warped.point_data["mag"][:] = current_mag
 
+    # Update Stress Visuals
+    P_mag_func.interpolate(stress_expr)
+    warped_stress.points[:, :] = warped_n.points
+    warped_stress.cell_data["P_mag"][:] = P_mag_func.x.array
+
+    plotter.subplot(0, 0)
     max_disp = np.max(current_mag)
     if max_disp > 0:
         plotter.update_scalar_bar_range([0, max_disp])
+-
+    plotter.subplot(0, 0)
+    warped.points[:, :] = warped_n.points
+    current_mag = magnitude.x.array
+    warped.point_data["mag"][:] = current_mag
+    warped.set_active_scalars("mag")
+    max_disp = np.max(current_mag)
+    if max_disp > 1e-10:
+        plotter.update_scalar_bar_range([0, max_disp], name="mag")
+-
+    plotter.subplot(0, 1)
+    warped_stress.points[:, :] = warped_n.points
+    warped_stress.cell_data["P_mag"][:] = P_mag_func.x.array
+    max_stress = np.max(P_mag_func.x.array)
+    if max_stress > 1e-10:
+        plotter.update_scalar_bar_range([0, max_stress], name="P_mag")
+    
+    plotter.render()
     plotter.write_frame()
 
 plotter.close()
