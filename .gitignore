@@ -2,5 +2,6 @@
 *.xdmf
 *.h5
 *.vtk
+*.gif
 __pycache__/
 .DS_Store
