@@ -3,6 +3,7 @@ from dolfinx.fem.petsc import NonlinearProblem
 import pyvista
 import numpy as np
 import ufl
+import matplotlib.pyplot as plt
 
 from mpi4py import MPI
 from dolfinx import fem, mesh, plot
@@ -13,7 +14,7 @@ W=0.02
 domain = mesh.create_rectangle(
     comm=MPI.COMM_WORLD, 
     points=((0.0, 0.0), (L, W)), 
-    n=[50, 25], 
+    n=[100, 50], 
     cell_type=mesh.CellType.quadrilateral
 )
 
@@ -150,9 +151,23 @@ V_mag_stress = fem.functionspace(domain, ("Discontinuous Lagrange", 0))
 P_mag_func = fem.Function(V_mag_stress)
 stress_expr = fem.Expression(P_magnitude_expr, V_mag_stress.element.interpolation_points)
 
+# To store values for plotting
+load_steps = []
+disp_steps = []
+
+# Find the node at the tip (right edge, center height)
+# x[0] is length (L), x[1] is height (W)
+def right_bottom_corner(x):
+    # Selects the point where x is L and y is 0
+    return np.logical_and(np.isclose(x[0], L, atol=1e-7), 
+                          np.isclose(x[1], 0, atol=1e-7))
+
+# Find the DOFs at this geometric location
+corner_dofs = fem.locate_dofs_geometrical(V, right_bottom_corner)
+node_index = corner_dofs[0]
 
 log.set_log_level(log.LogLevel.INFO)
-tval0 = -2
+tval0 = -10
 for n in range(1, 10):
     T.value[1] = n * tval0
     problem.solve()
@@ -160,11 +175,19 @@ for n in range(1, 10):
     num_its = problem.solver.getIterationNumber()
     assert converged > 0, f"Solver did not converge with reason {converged}."
 
+
     print(f"Time step {n}, Number of iterations {num_its}, Load {T.value}")
     function_grid["u"][:, : len(u)] = u.x.array.reshape(geometry.shape[0], len(u))
     magnitude.interpolate(us)
     warped.set_active_scalars("mag")
     warped_n = function_grid.warp_by_vector(factor=1)
+
+    current_u_y = abs(u.x.array[node_index * 2 + 1])
+    
+    load_steps.append(abs(T.value[1]))
+    disp_steps.append(current_u_y)
+    
+    print(f"Step {n}: Load {abs(T.value[1]):.2f}, Displacement {current_u_y:.6f}")
     
     # Update Displacement points and data
     warped.points[:, :] = warped_n.points
@@ -180,7 +203,7 @@ for n in range(1, 10):
     max_disp = np.max(current_mag)
     if max_disp > 0:
         plotter.update_scalar_bar_range([0, max_disp])
--
+
     plotter.subplot(0, 0)
     warped.points[:, :] = warped_n.points
     current_mag = magnitude.x.array
@@ -189,7 +212,7 @@ for n in range(1, 10):
     max_disp = np.max(current_mag)
     if max_disp > 1e-10:
         plotter.update_scalar_bar_range([0, max_disp], name="mag")
--
+
     plotter.subplot(0, 1)
     warped_stress.points[:, :] = warped_n.points
     warped_stress.cell_data["P_mag"][:] = P_mag_func.x.array
@@ -201,3 +224,27 @@ for n in range(1, 10):
     plotter.write_frame()
 
 plotter.close()
+
+import matplotlib.pyplot as plt
+
+# 1. Create the figure
+plt.figure(figsize=(8, 6))
+
+# 2. Plot Displacement (X-axis) vs Load (Y-axis)
+# We use '-o' to show both the line and the specific data points at each step
+plt.plot(disp_steps, load_steps, '-o', color='royalblue', linewidth=2, label='Simulation Data')
+
+# 3. Add labels and title
+plt.xlabel('Displacement at Node 1024 (m)', fontsize=12)
+plt.ylabel('Applied Load Magnitude (T)', fontsize=12)
+plt.title('Non-linear Load vs. Displacement Curve', fontsize=14)
+
+# 4. Add styling: grid and legend
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.legend()
+
+# 5. Save the plot for your GitHub repository
+plt.savefig("load_vs_displacement.png", dpi=300)
+
+# 6. Display the plot
+plt.show()
