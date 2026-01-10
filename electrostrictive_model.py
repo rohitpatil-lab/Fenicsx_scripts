@@ -40,6 +40,8 @@ V = fem.functionspace(domain, m_el)
 sol = fem.Function(V)
 u, phi = ufl.split(sol)
 v, q = ufl.TestFunctions(V)
+dw = ufl.TrialFunction(V)
+du, dphi = ufl.split(dw)
 
 #Material Parameters
 lmbda = fem.Constant(domain, default_scalar_type(1e4))  # Lame lambda
@@ -48,15 +50,44 @@ gamma = fem.Constant(domain, default_scalar_type(1e-2))  # Dielectric permittivi
 beta1 = fem.Constant(domain, default_scalar_type(1e-3))  # Electrostrictive coeff 1
 beta2 = fem.Constant(domain, default_scalar_type(1e-3))  # Electrostrictive coeff 2
 
+#External Work/Source Terms (Variables from Eq. 13)
+B_force = fem.Constant(domain, default_scalar_type((0.0, 0.0))) # Body force f_bar
+Traction = fem.Constant(domain, default_scalar_type((0.0, 0.0))) # Traction t_bar
+S_f = fem.Constant(domain, default_scalar_type(0.0))            # Free charge density S_f
+w_f = fem.Constant(domain, default_scalar_type(0.0))            # Surface charge density w_f
+
 # Kinematics and Electric Field
-epsilon = ufl.sym(ufl.grad(u)) # Small strain tensor
-E_field = -ufl.grad(phi)       # Electric field vector
+epsilon_var = ufl.variable(ufl.sym(ufl.grad(u))) # Small strain tensor
+E_var = ufl.variable(-ufl.grad(phi))       # Electric field vector
 
 # Invariants
-I1 = ufl.tr(epsilon)
-I2 = ufl.tr(epsilon * epsilon)
-V1 = ufl.inner(E_field, E_field)
-K1 = ufl.inner(epsilon, ufl.outer(E_field, E_field))
+I1 = ufl.tr(epsilon_var)
+I2 = ufl.tr(epsilon_var * epsilon_var)
+V1 = ufl.inner(E_var, E_var)
+K1 = ufl.inner(epsilon_var, ufl.outer(E_var, E_var))
 
 # Total Energy Density Function
 psi = (lmbda/2 * I1**2 + mu * I2) - (gamma/2 * V1) - (beta1 * I1 * V1) - (beta2 * K1)
+
+# Explicit Stresses, Displacements, and Moduli
+sigma = ufl.diff(psi, epsilon_var)
+D = -ufl.diff(psi, E_var)
+
+A = ufl.diff(sigma, epsilon_var)
+permittivity = ufl.diff(-D, E_var)
+M = ufl.diff(sigma, E_var)
+
+fdim = domain.topology.dim - 1
+metadata = {"quadrature_degree": 4}
+dx = ufl.Measure("dx", domain=domain, metadata=metadata)
+ds = ufl.Measure("ds", domain=domain, metadata=metadata)
+
+# Internal Virtual Work - External Work terms from Eq. (13)/(66) [cite: 66]
+# Note: D = -dPsi/dE, sigma = dPsi/deps [cite: 103]
+internal_work = ufl.derivative(psi * dx, sol, ufl.TestFunction(V))
+external_work = (ufl.inner(v, B_force) * dx + ufl.inner(v, Traction) * ds 
+                 - ufl.inner(q, S_f) * dx - ufl.inner(q, w_f) * ds)
+
+residual = internal_work - external_work
+
+J = ufl.derivative(residual, sol, ufl.TrialFunction(V))
