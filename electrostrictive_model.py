@@ -91,3 +91,45 @@ external_work = (ufl.inner(v, B_force) * dx + ufl.inner(v, Traction) * ds
 residual = internal_work - external_work
 
 J = ufl.derivative(residual, sol, ufl.TrialFunction(V))
+
+#Boundary Conditions
+fdim = domain.topology.dim - 1
+def left(x): return np.isclose(x[0], 0)
+def right(x): return np.isclose(x[0], L)
+left_facets = mesh.locate_entities_boundary(domain, fdim, left)
+right_facets = mesh.locate_entities_boundary(domain, fdim, right)
+marked_facets = np.hstack([left_facets, right_facets])
+marked_values = np.hstack([np.full_like(left_facets, 1, dtype=np.int32), 
+                           np.full_like(right_facets, 2, dtype=np.int32)])
+sorted_indices = np.argsort(marked_facets)
+facet_tag = mesh.meshtags(domain, fdim, marked_facets[sorted_indices], marked_values[sorted_indices])
+
+# Mechanical BC
+V0, _ = V.sub(0).collapse() 
+u_zero = fem.Function(V0)
+u_zero.x.array[:] = 0.0
+left_dofs_u = fem.locate_dofs_topological((V.sub(0), V0), fdim, facet_tag.find(1))
+if isinstance(left_dofs_u, list):
+    left_dofs_u = left_dofs_u[0]
+
+bc_u = fem.dirichletbc(u_zero, left_dofs_u)
+
+#Electrical BCs
+V1, _ = V.sub(1).collapse()
+phi_ground = fem.Function(V1)
+phi_ground.x.array[:] = 0.0
+left_dofs_phi = fem.locate_dofs_topological((V.sub(1), V1), fdim, facet_tag.find(1))
+if isinstance(left_dofs_phi, list):
+    left_dofs_phi = left_dofs_phi[0]
+    
+bc_phi_left = fem.dirichletbc(phi_ground, left_dofs_phi)
+
+phi_high = fem.Function(V1)
+phi_high.x.array[:] = 100.0
+right_dofs_phi = fem.locate_dofs_topological((V.sub(1), V1), fdim, facet_tag.find(2))
+if isinstance(right_dofs_phi, list):
+    right_dofs_phi = right_dofs_phi[0]
+
+bc_phi_right = fem.dirichletbc(phi_high, right_dofs_phi)
+
+bcs = [bc_u, bc_phi_left, bc_phi_right]
